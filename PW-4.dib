@@ -1,0 +1,179 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"csharp","items":[{"aliases":[],"languageName":"csharp","name":"csharp"}]}}
+
+#!markdown
+
+# Практическая работа №1. Знакомство с потоками.
+
+**Цель:** Познакомиться с возможностями класса System.Thread платформы .NET Framework.
+
+**Результаты:** После выполнения работы Вы сможете:
+1. Запускать длительные операции в отдельном потоке.
+2. Завершать поток.
+3. Дожидаться завершения выполнения потока. 
+
+
+**Материалы для самостоятельного изучения**.
+1. [Основы управления потоками](https://learn.microsoft.com/en-us/dotnet/standard/threading/managed-threading-basics)
+2. [Использование потоков](https://learn.microsoft.com/en-us/dotnet/standard/threading/using-threads-and-threading)
+3. [Примитив синхронизации Барьер](https://learn.microsoft.com/ru-ru/dotnet/standard/threading/barrier)
+4. [Interlocked операции](https://learn.microsoft.com/en-us/dotnet/api/system.threading.interlocked?view=net-8.0)
+
+## Задание.
+Реализовать вычисление определенного интеграла методом трапеции в несколько потоков.
+
+Отрезок, на котором происходит вычисление, разбивается на отрезки по количеству потоков. Для каждого отрезка значение 
+интеграла считается в отдельном потоке, после завершения вычисоения полученный рельтаты суммирутся.
+
+**Указание**.
+1. Для суммирования результатов удобно воспользоваться разделяемой переменной, к которой будут прибалятся результаты вычисления прямо в самом потоке. Для синхронизации операций сложения лучше всего восользоваться [Interlocked операцией](https://learn.microsoft.com/en-us/dotnet/api/system.threading.?view=net-8.0).
+2. Основная функция долна дождаться завершения всех потоков, которые вычисляют значение на отрезках, прежде чем возвратить результат. Для этого удобнее всего использовать Примитив синхронизации [Барьер](https://learn.microsoft.com/ru-ru/dotnet/standard/threading/barrier).
+
+#!csharp
+
+using System;
+using System.Threading;
+using System.Diagnostics;
+
+public class DefiniteIntegral
+{
+    public static (double res, long time) Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
+    {
+        double res = 0.0;
+        Barrier barrier = new Barrier(threadsnumber + 1);
+        double local = (b - a) / threadsnumber;
+        object locker = new object();
+        Stopwatch stopwatch = new Stopwatch();
+        stopwatch.Start();
+        for (int i = 0; i < threadsnumber; i++)
+        {
+            int thread_i = i;
+            Thread thread = new Thread(() =>
+            {
+                double aL = a + thread_i * local;
+                double bL = a + (thread_i + 1) * local;
+                double resL = 0.0;
+                for (double j = aL; j < bL; j += step)
+                {
+                    double jstep = j + step;
+                    if (jstep > bL)
+                    {
+                        jstep = bL;
+                    }
+                    resL += (function(j) + function(jstep)) * (jstep - j) / 2;
+                }
+                lock (locker)
+                {
+                    res += resL;
+                }
+                barrier.SignalAndWait();
+            });
+            thread.Start();
+        }
+        barrier.SignalAndWait();
+        stopwatch.Stop();
+        long time = stopwatch.ElapsedTicks;
+        return  (res, time);
+    }
+}
+
+#!csharp
+
+#r "nuget: xunit, 2.8.1"
+#r "nuget:ScottPlot, 5.0.35"
+
+using Xunit;
+using Microsoft.DotNet.Interactive.Formatting;
+
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(600, 600)), HtmlFormatter.MimeType);
+
+var X = (double x) => x;
+var SIN = (double x) => Math.Sin(x);
+List<int> threadCounts = new List<int>();
+List<long> executionTimes = new List<long>();
+
+Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2).res, 1e-4);
+Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8).res, 1e-4);
+Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8).res, 1e-5);
+Assert.Equal(0, DefiniteIntegral.Solve(-100, 100, SIN, 1e-4, 8).res, 1e-4);
+
+for (int i = 1; i <= 50; i += 1)
+{
+    var (res, t) = DefiniteIntegral.Solve(-100, 100, SIN, 1e-4, i);
+    threadCounts.Add(i);
+    executionTimes.Add(t);
+    Console.WriteLine($"Количество потоков: {i}, Время: {t} ");
+}
+
+double[] dataThreads = threadCounts.Select(x => (double)x).ToArray();
+double[] dataTimes = executionTimes.Select(x => (double)x).ToArray();
+
+ScottPlot.Plot plt = new();
+plt.Add.Scatter(dataThreads, dataTimes);
+
+plt
+
+#!markdown
+
+# Однопоточная версия
+
+#!csharp
+
+using System.Diagnostics;
+
+public class DefiniteIntegral
+{
+    public static (double res, long time) Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
+    {
+        double res = 0.0;
+        Stopwatch stopwatch = new Stopwatch();
+        stopwatch.Start();
+        for (double j = a; j < b; j += step)
+        {
+            double jstep = j + step;
+            if (jstep > b)
+            {
+                jstep = b;
+            }
+            res += (function(j) + function(jstep)) * (jstep - j) / 2;
+        }
+        stopwatch.Stop();
+        long time = stopwatch.ElapsedTicks;
+        return (res, time);
+    }
+}
+
+#!markdown
+
+# Summary
+**Размер шага** - честно говоря, не совсем понял, как его считать. По фидбеку товарищей выяснил, что их программы проходят тесты только при 1e-4, моя же без проблем переваривает все предложенные размеры шагов. Дальше будут перечислены минимальные значения времени при определенном количестве потоков для каждого размера шага:
+
+1e-1 - 2460 тиков при 2 потоках
+
+1e-2 - 4600 тиков при 3 потоках
+
+1e-3 - 13957 тиков при 5 потоках
+
+1e-4 - 77474 тиков при 15 потоках
+
+1e-5 - 584203 тиков при 15 потоках
+
+1e-6 - 5489950 тиков при 16 потоках
+
+Таким образом:
+
+1. Минимальный из работающих шагов - 1e-6
+
+2. Минимальное время достигается в шаге 1e-1 при 2 потоках
+
+3. Самый равномерный график достигается в шаге 1e-4
+
+По какому критерию судить об оптимальности выбора шага - мне до конца не понятно.
+
+Время работы однопоточной версии - 420547 тиков. 
+
+1e-1 при 2 потоках быстрее однопоточной версии в 17100%, 1e-4 при 15 потоках быстрее однопоточной версии в 543%, 1e-6 медленнее однопоточной версии. 
+
+Таким образом, самая большая разница с однопоточной версией достигается при шаге 1e-1 с 2 потоками, но самый маленький шаг, минимальное время выполнения которого больше времени выполнения однопоточной версии программы - 1e-4.
