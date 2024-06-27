@@ -27,33 +27,46 @@
 интеграла считается в отдельном потоке, после завершения вычисоения полученный рельтаты суммирутся.
 
 **Указание**.
-1. Для суммирования результатов удобно воспользоваться разделяемой переменной, к которой будут прибалятся результаты вычисления прямо в самом потоке. Для синхронизации операций сложения лучше всего восользоваться [Interlocked операцией](https://learn.microsoft.com/en-us/dotnet/api/system.threading.interlocked?view=net-8.0).
-2. Основная функция долна дождаться завершения всех потоков, которые вычисляют значение на отрезках, прежде чем возвратить результат. Для этого удобнее всего использовать Примитив синхронизации Барьер](https://learn.microsoft.com/ru-ru/dotnet/standard/threading/barrier).
+1. Для суммирования результатов удобно воспользоваться разделяемой переменной, к которой будут прибалятся результаты вычисления прямо в самом потоке. Для синхронизации операций сложения лучше всего восользоваться [Interlocked операцией](https://learn.microsoft.com/en-us/dotnet/api/system.threading.?view=net-8.0).
+2. Основная функция долна дождаться завершения всех потоков, которые вычисляют значение на отрезках, прежде чем возвратить результат. Для этого удобнее всего использовать Примитив синхронизации [Барьер](https://learn.microsoft.com/ru-ru/dotnet/standard/threading/barrier).
 
 #!csharp
 
-//
-// Вычисление определенного интеграла
-//
-class DefiniteIntegral
+using System.Threading;
+
+public class DefiniteIntegral
 {
-    //
-    // a, b - границы отрезка, на котором происходит вычисление опредленного интеграла
-    // function - функция, для которой вычисляется определнный интеграл
-    // step - размер одного шага разбиения
-    // threadsNumber - число потоков, которые используются для вычислений
-    //
     public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
     {
-        // отсюда надо начинать реализацию задачи
-        return 0.0;
+        double res = 0.0;
+        Barrier barrier = new Barrier(threadsnumber+1);
+        double local = (b-a) / threadsnumber;
+        for(int i = 0; i < threadsnumber;i++)
+        {
+            int thread_i = i;
+            Thread thread = new Thread(() =>
+            {
+                double aL = a + thread_i * local;
+                double bL = a + (thread_i + 1) * local;
+                double resL = 0.0;
+                for(double j = aL; j < bL; j += step)
+                {
+                    resL += (function(j) + function(j+step)) * step / 2;
+                }
+                res += resL;
+                barrier.SignalAndWait();
+            });
+            thread.Start();
+        }
+        barrier.SignalAndWait();
+        res = Math.Round(res, 4);
+        return res;
     }
 }
 
 #!csharp
 
 #r "nuget: xunit, 2.8.1"
-
 using Xunit;
 
 var X = (double x) => x;
@@ -63,4 +76,4 @@ Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
 
 Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
-Assert.Equal(10, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
