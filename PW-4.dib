@@ -111,7 +111,7 @@ double[] dataThreads = threadCounts.Select(x => (double)x).ToArray();
 double[] dataTimes = executionTimes.Select(x => (double)x).ToArray();
 
 ScottPlot.Plot plt = new();
-plt.Add.Scatter(dataThreads, dataTimes);
+plt.Add.Scatter(dataTimes, dataThreads);
 
 plt
 
