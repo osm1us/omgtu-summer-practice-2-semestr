@@ -37,10 +37,107 @@
 Для этого следует использовать условные события, которые позволят убедиться, что оба потока запустились и готовы читать и писать объекты и только потом запускать таймер.
 2. Для итогового вывода сравнивать усредненные значения.
 
-#!markdown
+#!csharp
 
-// здесь писать код
+using System.Diagnostics;
+using System.Threading;
+using System.Collections.Concurrent;
+
+static double ntsTime()
+{
+    var queue = new Queue<int>();
+
+    var stopwatch = new Stopwatch();
+    stopwatch.Start();
+
+    for (int i = 0; i < 1000000; i++) queue.Enqueue(i);
+    for (int i = 0; i < 1000000; i++) queue.Dequeue();
+
+    stopwatch.Stop();
+    return stopwatch.ElapsedMilliseconds;
+}
+
+static double bcTime()
+{
+    var collection = new BlockingCollection<int>();
+    var resetEvent = new ManualResetEvent(false);
+
+    var producer = new Thread(() =>
+    {
+        resetEvent.WaitOne();
+        for (int i = 0; i < 1000000; i++) collection.Add(i);
+    });
+
+    var consumer = new Thread(() =>
+    {
+        resetEvent.WaitOne();
+        while (collection.TryTake(out int something)) { }
+    });
+
+    producer.Start();
+    consumer.Start();
+
+    var stopwatch = new Stopwatch();
+
+    resetEvent.Set();
+    stopwatch.Start();
+
+    producer.Join();
+    consumer.Join();
+
+    stopwatch.Stop();
+    return stopwatch.ElapsedMilliseconds;
+}
+
+static double cqTime()
+{
+    var queue = new ConcurrentQueue<int>();
+    var resetEvent = new ManualResetEvent(false);
+
+    var producer = new Thread(() =>
+    {
+        resetEvent.WaitOne();
+        for (int i = 0; i < 1000000; i++) queue.Enqueue(i);
+    });
+
+    var consumer = new Thread(() =>
+    {
+        resetEvent.WaitOne();
+        while (queue.TryDequeue(out int something)) { }
+    });
+
+    producer.Start();
+    consumer.Start();
+
+    var stopwatch = new Stopwatch();
+
+    resetEvent.Set();
+    stopwatch.Start();
+
+    producer.Join();
+    consumer.Join();
+    
+    stopwatch.Stop();
+    return stopwatch.ElapsedMilliseconds;
+}
+
+var ntsRes = new List<double>();
+var bcRes = new List<double>();
+var cqRes = new List<double>();
+
+for (int i = 0; i < 10; i++)
+{
+    ntsRes.Add(ntsTime());
+    bcRes.Add(bcTime());
+    cqRes.Add(cqTime());
+}
+
+Console.WriteLine($"Непотокобезопасная очередь - Среднее время: {ntsRes.Average()} мс");
+Console.WriteLine($"BlockingCollection - Среднее время: {bcRes.Average()} мс");
+Console.WriteLine($"ConcurrentQueue - Среднее время: {cqRes.Average()} мс");
 
 #!markdown
 
 ## Вывод
+
+Самая быстрая из потоко-безопасных коллекций - **ConcurrentQueue**, она быстрее непотокобезопасной очереди на 35%
