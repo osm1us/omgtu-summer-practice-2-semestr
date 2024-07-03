@@ -98,14 +98,14 @@ public class ExceptionCommand : ICommand
 public class ServerThread
 {
     public Thread thread;
-    public ConcurrentQueue<ICommand> commandQ;
+    public BlockingCollection<ICommand> commandQ;
     public bool active;
     public bool sStopNeeded;
 
     public ServerThread()
     {
         thread = new Thread(Run);
-        commandQ = new ConcurrentQueue<ICommand>();
+        commandQ = new BlockingCollection<ICommand>();
         active = true;
         sStopNeeded = false;
         thread.Start();
@@ -115,7 +115,7 @@ public class ServerThread
     {
         while (active)
         {
-            if (commandQ.TryDequeue(out ICommand command))
+            if (commandQ.TryTake(out ICommand command))
             {
                 try
                 {
@@ -127,7 +127,7 @@ public class ServerThread
                 }
             }
 
-            if (sStopNeeded && commandQ.IsEmpty)
+            if (sStopNeeded && commandQ.Count == 0)
             {
                 active = false;
             }
@@ -146,13 +146,13 @@ public void testSoftStop()
     ServerThread serverThread = new ServerThread();
     for (int i = 0; i < 5; i++)
     {
-        serverThread.commandQ.Enqueue(new RandomCommand());
+        serverThread.commandQ.Add(new RandomCommand());
     }
-    serverThread.commandQ.Enqueue(new SoftStopCommand(serverThread));
+    serverThread.commandQ.Add(new SoftStopCommand(serverThread));
     serverThread.thread.Join();
 
     Assert.False(serverThread.active);
-    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.IsEmpty);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.Count == 0);
 }
 
 [Fact]
@@ -161,9 +161,9 @@ public void testHardStop()
     ServerThread serverThread = new ServerThread();
     for (int i = 0; i < 5; i++)
     {
-        serverThread.commandQ.Enqueue(new RandomCommand());
+        serverThread.commandQ.Add(new RandomCommand());
     }
-    serverThread.commandQ.Enqueue(new HardStopCommand(serverThread));
+    serverThread.commandQ.Add(new HardStopCommand(serverThread));
     serverThread.thread.Join();
 
     Assert.False(serverThread.active);
@@ -173,9 +173,9 @@ public void testHardStop()
 public void testException()
 {
     ServerThread serverThread = new ServerThread();
-    serverThread.commandQ.Enqueue(new ExceptionCommand());
-    serverThread.commandQ.Enqueue(new SoftStopCommand(serverThread));
+    serverThread.commandQ.Add(new ExceptionCommand());
+    serverThread.commandQ.Add(new SoftStopCommand(serverThread));
     serverThread.thread.Join();
     Assert.False(serverThread.active);
-    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.IsEmpty);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.Count == 0);
 }
