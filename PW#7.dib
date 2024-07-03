@@ -55,6 +55,9 @@ public class HardStopCommand : ICommand
 
     public void Execute()
     {
+        if (Thread.CurrentThread != serverThread.thread) 
+        throw new InvalidOperationException("HardStop должен выполняться только в потоке, который он должен остановить");
+
         serverThread.active = false;
     }
 }
@@ -69,6 +72,9 @@ public class SoftStopCommand : ICommand
 
     public void Execute()
     {
+        if (Thread.CurrentThread != serverThread.thread) 
+        throw new InvalidOperationException("SoftStop должен выполняться только в потоке, который он должен остановить");
+        
         serverThread.sStopNeeded = true;
     }
 }
