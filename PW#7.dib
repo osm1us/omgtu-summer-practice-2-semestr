@@ -19,7 +19,7 @@
 
 public interface ICommand
 {
-    void Execute();
+    void Execute(); 
 }
 
 #!markdown
@@ -38,3 +38,138 @@ ServerThread может менять свое поведение для обра
 Отсутствие Команд в очереди потока не должно требовать значительных затрат процессорного времени. Значительными считаются затраты, которые зависят от времени простоя потока.
 
 Написать проверку, которая гарантирует правильное выполнение команд HardStop и SoftStop.
+
+#!csharp
+
+using System.Threading;
+using System.Collections.Concurrent;
+
+public class HardStopCommand : ICommand
+{
+    public ServerThread serverThread;
+
+    public HardStopCommand(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        serverThread.active = false;
+    }
+}
+public class SoftStopCommand : ICommand
+{
+    public ServerThread serverThread;
+
+    public SoftStopCommand(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        serverThread.sStopNeeded = true;
+    }
+}
+public class RandomCommand : ICommand
+{
+    public void Execute()
+    {
+        Console.WriteLine("Что-то выполнилось");
+    }
+}
+
+public class ExceptionCommand : ICommand
+{
+    public void Execute()
+    {
+        int x = 144; int y = 0;
+        Console.WriteLine(x / y);
+    }
+}
+
+public class ServerThread
+{
+    public Thread thread;
+    public ConcurrentQueue<ICommand> commandQ;
+    public bool active;
+    public bool sStopNeeded;
+
+    public ServerThread()
+    {
+        thread = new Thread(Run);
+        commandQ = new ConcurrentQueue<ICommand>();
+        active = true;
+        sStopNeeded = false;
+        thread.Start();
+    }
+
+    public void Run()
+    {
+        while (active)
+        {
+            if (commandQ.TryDequeue(out ICommand command))
+            {
+                try
+                {
+                    command.Execute();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Возникло исключение: {ex.Message}");
+                }
+            }
+
+            if (sStopNeeded && commandQ.IsEmpty)
+            {
+                active = false;
+            }
+        }
+    }
+}
+
+#!csharp
+
+#r "nuget: xunit, 2.8.1"
+using Xunit;
+
+[Fact]
+public void testSoftStop()
+{
+    ServerThread serverThread = new ServerThread();
+    for (int i = 0; i < 5; i++)
+    {
+        serverThread.commandQ.Enqueue(new RandomCommand());
+    }
+    serverThread.commandQ.Enqueue(new SoftStopCommand(serverThread));
+    serverThread.thread.Join();
+
+    Assert.False(serverThread.active);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.IsEmpty);
+}
+
+[Fact]
+public void testHardStop()
+{
+    ServerThread serverThread = new ServerThread();
+    for (int i = 0; i < 5; i++)
+    {
+        serverThread.commandQ.Enqueue(new RandomCommand());
+    }
+    serverThread.commandQ.Enqueue(new HardStopCommand(serverThread));
+    serverThread.thread.Join();
+
+    Assert.False(serverThread.active);
+}
+
+[Fact]
+public void testException()
+{
+    ServerThread serverThread = new ServerThread();
+    serverThread.commandQ.Enqueue(new ExceptionCommand());
+    serverThread.commandQ.Enqueue(new SoftStopCommand(serverThread));
+    serverThread.thread.Join();
+    Assert.False(serverThread.active);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.IsEmpty);
+}
