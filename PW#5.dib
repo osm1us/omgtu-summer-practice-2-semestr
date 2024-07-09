@@ -56,11 +56,31 @@ class Message
 #!csharp
 
 using System.Collections.Concurrent;
+using System.Threading;
 
-var queue1 = new BlockingCollection<Message>(2); //очередь первого потока
-var queue2 = new BlockingCollection<Message>(2); //очередь второго потока
+var queue1 = new BlockingCollection<Message>(2);
+var queue2 = new BlockingCollection<Message>(2);
 
-// Здесь писать решение
+void PingPong(BlockingCollection<Message> inQueue, BlockingCollection<Message> outQueue)
+{
+    for (int i = 0; i < 100; i++)
+    {
+        var message = inQueue.Take();
+        message.Handle();
+        if (!(i == 99 && inQueue == queue2))
+        {
+            outQueue.Add(new Message());
+        }
+    }
+}
+
+var thread1 = new Thread(() => PingPong(queue1, queue2));
+var thread2 = new Thread(() => PingPong(queue2, queue1));
+
+thread1.Start();
+thread2.Start();
+
+queue1.Add(new Message());
 
 #!csharp
 
