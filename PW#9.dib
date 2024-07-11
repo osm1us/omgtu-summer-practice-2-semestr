@@ -20,12 +20,75 @@
 
 #!csharp
 
-interface ICommand
+public interface ICommand
 {
     void Execute();
 }
 
+public interface IScheduler
+{
+    bool HasCommand();
+    ICommand Select();
+    void Add(ICommand cmd);
+}
 
+#!csharp
+
+using System.Threading;
+using System.Collections.Concurrent;
+
+public class HardStopCommand : ICommand
+{
+    public ServerThread serverThread;
+
+    public HardStopCommand(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        if (Thread.CurrentThread != serverThread.thread)
+            throw new InvalidOperationException("HardStop должен выполняться только в потоке, который он должен остановить");
+
+        serverThread.active = false;
+    }
+}
+
+public class SoftStopCommand : ICommand
+{
+    public ServerThread serverThread;
+
+    public SoftStopCommand(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        if (Thread.CurrentThread != serverThread.thread)
+            throw new InvalidOperationException("SoftStop должен выполняться только в потоке, который он должен остановить");
+
+        serverThread.sStopNeeded = true;
+    }
+}
+
+public class RandomCommand : ICommand
+{
+    public void Execute()
+    {
+        Console.WriteLine("Что-то выполнилось");
+    }
+}
+
+public class ExceptionCommand : ICommand
+{
+    public void Execute()
+    {
+        int x = 144; int y = 0;
+        Console.WriteLine(x / y);
+    }
+}
 public class TestCommand(int id) : ICommand
 {
     int counter = 0;
@@ -35,6 +98,185 @@ public class TestCommand(int id) : ICommand
         Console.WriteLine($"Поток {id} вызов {++counter}");
     }
 }
+
+public class Scheduler : IScheduler
+{
+    public ConcurrentQueue<ICommand> commandQ = new ConcurrentQueue<ICommand>();
+
+    public bool HasCommand()
+    {
+        return !commandQ.IsEmpty;
+    }
+
+    public ICommand Select()
+    {
+        if (commandQ.TryDequeue(out ICommand command))
+        {
+            return command;
+        }
+        throw new InvalidOperationException("Планировщик пуст.");
+    }
+
+    public void Add(ICommand command)
+    {
+        commandQ.Enqueue(command);
+    }
+}
+
+public class LongCommand : ICommand
+{
+    public ICommand command;
+    public Scheduler scheduler;
+    public int executions;
+
+    public LongCommand(ICommand command, Scheduler scheduler, int executions)
+    {
+        this.command = command;
+        this.scheduler = scheduler;
+        this.executions = executions;
+    }
+
+    public void Execute()
+    {
+        if(executions > 0)
+        {
+            command.Execute();
+            executions--;
+            if(executions > 0) scheduler.Add(this);
+        }
+    }
+}
+
+public class ServerThread
+{
+    public Thread thread;
+    public BlockingCollection<ICommand> commandQ;
+    public Scheduler scheduler;
+    public bool active;
+    public bool sStopNeeded;
+
+    public ServerThread(Scheduler scheduler)
+    {
+        this.scheduler = scheduler;
+        thread = new Thread(Run);
+        commandQ = new BlockingCollection<ICommand>();
+        active = true;
+        sStopNeeded = false;
+        thread.Start();
+    }
+
+    public void Run()
+    {
+        while (active)
+        {
+            ICommand command = null;
+            if (scheduler.HasCommand())
+            {
+                command = scheduler.Select();
+            }
+            else if (commandQ.TryTake(out command))
+            {
+                if (command is LongCommand)
+                {
+                    scheduler.Add(command);
+                }
+            }
+            
+            if (command != null)
+            {
+                try
+                {
+                    command.Execute();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Возникло исключение: {ex.Message}");
+                }
+            }
+
+            if (sStopNeeded && commandQ.Count == 0 && !scheduler.HasCommand())
+            {
+                active = false;
+            }
+        }
+    }
+}
+
+#!csharp
+
+#r "nuget: xunit, 2.8.1"
+using Xunit;
+
+[Fact]
+public void testSoftStop()
+{
+    var scheduler = new Scheduler();
+    var serverThread = new ServerThread(scheduler);
+    for (int i = 0; i < 5; i++)
+    {
+        serverThread.commandQ.Add(new RandomCommand());
+    }
+    serverThread.commandQ.Add(new SoftStopCommand(serverThread));
+    serverThread.thread.Join();
+
+    Assert.False(serverThread.active);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.Count == 0);
+}
+
+[Fact]
+public void testHardStop()
+{
+    var scheduler = new Scheduler();
+    var serverThread = new ServerThread(scheduler);
+    for (int i = 0; i < 5; i++)
+    {
+        serverThread.commandQ.Add(new RandomCommand());
+    }
+    serverThread.commandQ.Add(new HardStopCommand(serverThread));
+    serverThread.thread.Join();
+
+    Assert.False(serverThread.active);
+}
+
+[Fact]
+public void testException()
+{
+    var scheduler = new Scheduler();
+    var serverThread = new ServerThread(scheduler);
+    serverThread.commandQ.Add(new ExceptionCommand());
+    serverThread.commandQ.Add(new SoftStopCommand(serverThread));
+    serverThread.thread.Join();
+
+    Assert.False(serverThread.active);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.Count == 0);
+}
+
+[Fact]
+public void testLongRunningCommand()
+{
+    var scheduler = new Scheduler();
+    var serverThread = new ServerThread(scheduler);
+    var longCommand = new LongCommand(new RandomCommand(), scheduler, 3);
+    serverThread.commandQ.Add(longCommand);
+    serverThread.commandQ.Add(new SoftStopCommand(serverThread));
+    serverThread.thread.Join();
+
+    Assert.False(serverThread.active);
+    Assert.True(serverThread.sStopNeeded && serverThread.commandQ.Count == 0 && !scheduler.HasCommand());
+}
+
+#!csharp
+
+var scheduler = new Scheduler();
+var serverThread = new ServerThread(scheduler);
+
+for (int i = 0; i < 5; i++)
+{
+    serverThread.commandQ.Add(new LongCommand(new TestCommand(i + 1), scheduler, 3));
+}
+serverThread.commandQ.Add(new HardStopCommand(serverThread));
+
+serverThread.thread.Join();
 
 #!markdown
 
